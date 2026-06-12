@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { Droplets, UserPlus, Check, Trash2, RotateCcw, Trophy, Users } from "lucide-react";
+import { Droplets, UserPlus, Check, Trash2, RotateCcw, Trophy, Users, Loader2 } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -12,36 +14,48 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-type Person = { id: string; name: string; payments: number };
-type Round = { id: string; pair: [string, string]; at: number };
-
-const STORAGE = "water-rotation-v1";
-
-function loadState(): { people: Person[]; history: Round[] } {
-  if (typeof window === "undefined") return { people: [], history: [] };
-  try {
-    const raw = localStorage.getItem(STORAGE);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return { people: [], history: [] };
-}
+type Person = { id: string; name: string; payments: number; created_at: string };
+type Round = { id: string; person_a: string; person_b: string; paid_at: string };
 
 function Index() {
   const [people, setPeople] = useState<Person[]>([]);
   const [history, setHistory] = useState<Round[]>([]);
   const [name, setName] = useState("");
-  const [hydrated, setHydrated] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [paying, setPaying] = useState(false);
 
+  // Load + realtime
   useEffect(() => {
-    const s = loadState();
-    setPeople(s.people);
-    setHistory(s.history);
-    setHydrated(true);
+    let active = true;
+    (async () => {
+      const [p, r] = await Promise.all([
+        supabase.from("people").select("*").order("created_at", { ascending: true }),
+        supabase.from("rounds").select("*").order("paid_at", { ascending: false }),
+      ]);
+      if (!active) return;
+      if (p.data) setPeople(p.data as Person[]);
+      if (r.data) setHistory(r.data as Round[]);
+      setLoading(false);
+    })();
+
+    const channel = supabase
+      .channel("water-rotation")
+      .on("postgres_changes", { event: "*", schema: "public", table: "people" }, async () => {
+        const { data } = await supabase.from("people").select("*").order("created_at", { ascending: true });
+        if (data) setPeople(data as Person[]);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "rounds" }, async () => {
+        const { data } = await supabase.from("rounds").select("*").order("paid_at", { ascending: false });
+        if (data) setHistory(data as Round[]);
+      })
+      .subscribe();
+
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
   }, []);
-
-  useEffect(() => {
-    if (hydrated) localStorage.setItem(STORAGE, JSON.stringify({ people, history }));
-  }, [people, history, hydrated]);
 
   const nextPair = useMemo<[Person, Person] | null>(() => {
     if (people.length < 2) return null;
@@ -49,30 +63,52 @@ function Index() {
     return [sorted[0], sorted[1]];
   }, [people]);
 
-  const addPerson = (e: React.FormEvent) => {
+  const addPerson = async (e: React.FormEvent) => {
     e.preventDefault();
     const n = name.trim();
     if (!n) return;
     if (people.some((p) => p.name.toLowerCase() === n.toLowerCase())) {
-      setName("");
+      toast.error("Essa pessoa já está cadastrada.");
       return;
     }
-    setPeople([...people, { id: crypto.randomUUID(), name: n, payments: 0 }]);
+    setSubmitting(true);
+    const { error } = await supabase.from("people").insert({ name: n });
+    setSubmitting(false);
+    if (error) {
+      toast.error("Erro ao cadastrar: " + error.message);
+      return;
+    }
     setName("");
+    toast.success(`${n} cadastrado(a)!`);
   };
 
-  const removePerson = (id: string) => setPeople(people.filter((p) => p.id !== id));
+  const removePerson = async (id: string, pname: string) => {
+    const { error } = await supabase.from("people").delete().eq("id", id);
+    if (error) toast.error("Erro ao remover: " + error.message);
+    else toast.success(`${pname} removido(a).`);
+  };
 
-  const markPaid = () => {
-    if (!nextPair) return;
+  const markPaid = async () => {
+    if (!nextPair || paying) return;
+    setPaying(true);
     const [a, b] = nextPair;
-    setPeople(people.map((p) => (p.id === a.id || p.id === b.id ? { ...p, payments: p.payments + 1 } : p)));
-    setHistory([{ id: crypto.randomUUID(), pair: [a.name, b.name], at: Date.now() }, ...history]);
+    const { error: e1 } = await supabase.from("people").update({ payments: a.payments + 1 }).eq("id", a.id);
+    const { error: e2 } = await supabase.from("people").update({ payments: b.payments + 1 }).eq("id", b.id);
+    const { error: e3 } = await supabase.from("rounds").insert({ person_a: a.name, person_b: b.name });
+    setPaying(false);
+    if (e1 || e2 || e3) {
+      toast.error("Erro ao registrar pagamento.");
+      return;
+    }
+    toast.success(`Pagamento de ${a.name} & ${b.name} registrado!`);
   };
 
-  const resetRotation = () => {
-    setPeople(people.map((p) => ({ ...p, payments: 0 })));
-    setHistory([]);
+  const resetRotation = async () => {
+    if (!confirm("Zerar todos os contadores e o histórico?")) return;
+    const { error: e1 } = await supabase.from("people").update({ payments: 0 }).neq("id", "00000000-0000-0000-0000-000000000000");
+    const { error: e2 } = await supabase.from("rounds").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    if (e1 || e2) toast.error("Erro ao zerar.");
+    else toast.success("Rodízio zerado.");
   };
 
   const ranked = [...people].sort((a, b) => a.payments - b.payments || a.name.localeCompare(b.name));
@@ -98,7 +134,9 @@ function Index() {
           <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] opacity-80">
             <Trophy className="h-3.5 w-3.5" /> Próxima dupla
           </div>
-          {nextPair ? (
+          {loading ? (
+            <div className="mt-4 flex items-center gap-2 opacity-90"><Loader2 className="h-4 w-4 animate-spin" /> Carregando…</div>
+          ) : nextPair ? (
             <>
               <div className="mt-4 flex flex-wrap items-end gap-x-3 gap-y-1">
                 <span className="text-3xl font-semibold sm:text-4xl">{nextPair[0].name}</span>
@@ -112,9 +150,10 @@ function Index() {
               </p>
               <button
                 onClick={markPaid}
-                className="mt-6 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-[color:var(--water-deep)] shadow-lg transition hover:scale-[1.02] active:scale-[0.98]"
+                disabled={paying}
+                className="mt-6 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-[color:var(--water-deep)] shadow-lg transition hover:scale-[1.02] active:scale-[0.98] disabled:opacity-60"
               >
-                <Check className="h-4 w-4" /> Marcar como pago
+                {paying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Marcar como pago
               </button>
             </>
           ) : (
@@ -138,9 +177,10 @@ function Index() {
           />
           <button
             type="submit"
-            className="rounded-xl bg-foreground px-5 py-3 text-sm font-semibold text-background transition hover:opacity-90 active:scale-95"
+            disabled={submitting}
+            className="inline-flex items-center gap-2 rounded-xl bg-foreground px-5 py-3 text-sm font-semibold text-background transition hover:opacity-90 active:scale-95 disabled:opacity-60"
           >
-            Adicionar
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />} Adicionar
           </button>
         </form>
       </section>
@@ -164,7 +204,9 @@ function Index() {
           )}
         </div>
 
-        {ranked.length === 0 ? (
+        {loading ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>
+        ) : ranked.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma pessoa cadastrada ainda.</p>
         ) : (
           <ul className="divide-y">
@@ -185,7 +227,7 @@ function Index() {
                     </div>
                   </div>
                   <button
-                    onClick={() => removePerson(p.id)}
+                    onClick={() => removePerson(p.id, p.name)}
                     className="rounded-lg p-2 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
                     aria-label={`Remover ${p.name}`}
                   >
@@ -212,10 +254,10 @@ function Index() {
               <li key={r.id} className="flex items-center justify-between rounded-xl bg-muted/60 px-4 py-3">
                 <div className="flex items-center gap-3">
                   <span className="text-xs font-mono text-muted-foreground">#{history.length - idx}</span>
-                  <span className="font-medium">{r.pair[0]} & {r.pair[1]}</span>
+                  <span className="font-medium">{r.person_a} & {r.person_b}</span>
                 </div>
                 <span className="text-xs text-muted-foreground">
-                  {new Date(r.at).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}
+                  {new Date(r.paid_at).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}
                 </span>
               </li>
             ))}

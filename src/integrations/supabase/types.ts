@@ -14,7 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      people: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          payments: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          payments?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          payments?: number
+        }
+        Relationships: []
+      }
+      rounds: {
+        Row: {
+          id: string
+          paid_at: string
+          person_a: string
+          person_b: string
+        }
+        Insert: {
+          id?: string
+          paid_at?: string
+          person_a: string
+          person_b: string
+        }
+        Update: {
+          id?: string
+          paid_at?: string
+          person_a?: string
+          person_b?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

@@ -77,14 +77,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "Rodizio de agua" },
+      { name: "description", content: "para compartilhamento de água mineral" },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "Rodizio de agua" },
+      { property: "og:description", content: "para compartilhamento de água mineral" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "Rodizio de agua" },
+      { name: "twitter:description", content: "para compartilhamento de água mineral" },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/8d332ce9-6650-4193-ad7a-858787842e27/id-preview-fb7add38--77727568-f0f4-468f-bfcc-8a3e11d99f59.lovable.app-1781272758564.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/8d332ce9-6650-4193-ad7a-858787842e27/id-preview-fb7add38--77727568-f0f4-468f-bfcc-8a3e11d99f59.lovable.app-1781272758564.png" },
     ],
     links: [
       {
